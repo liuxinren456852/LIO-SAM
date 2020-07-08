@@ -140,8 +140,6 @@ public:
 
     Eigen::Affine3f transPointAssociateToMap;
 
-    Eigen::Affine3f lastImuTransformation;
-
     mapOptimization()
     {
         ISAM2Params parameters;
@@ -154,7 +152,7 @@ public:
         pubOdomAftMappedROS = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry", 1);
         pubPath = nh.advertise<nav_msgs::Path>("lio_sam/mapping/path", 1);
 
-        subLaserCloudInfo = nh.subscribe<lio_sam::cloud_info>("lio_sam/feature/cloud_info", 1, &mapOptimization::laserCloudInfoHandler, this, ros::TransportHints().tcpNoDelay());
+        subLaserCloudInfo = nh.subscribe<lio_sam::cloud_info>("lio_sam/feature/cloud_info", 10, &mapOptimization::laserCloudInfoHandler, this, ros::TransportHints().tcpNoDelay());
         subGPS = nh.subscribe<nav_msgs::Odometry> (gpsTopic, 200, &mapOptimization::gpsHandler, this, ros::TransportHints().tcpNoDelay());
 
         pubHistoryKeyFrames = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/icp_loop_closure_history_cloud", 1);
@@ -361,7 +359,7 @@ public:
         pcl::PointCloud<PointType>::Ptr globalSurfCloud(new pcl::PointCloud<PointType>());
         pcl::PointCloud<PointType>::Ptr globalSurfCloudDS(new pcl::PointCloud<PointType>());
         pcl::PointCloud<PointType>::Ptr globalMapCloud(new pcl::PointCloud<PointType>());
-        for (int i = 0; i < cloudKeyPoses3D->size(); i++) {
+        for (int i = 0; i < (int)cloudKeyPoses3D->size(); i++) {
             *globalCornerCloud += *transformPointCloud(cornerCloudKeyFrames[i],  &cloudKeyPoses6D->points[i]);
             *globalSurfCloud   += *transformPointCloud(surfCloudKeyFrames[i],    &cloudKeyPoses6D->points[i]);
             cout << "\r" << std::flush << "Processing feature cloud " << i << " of " << cloudKeyPoses6D->size() << " ...";
@@ -405,7 +403,7 @@ public:
         kdtreeGlobalMap->radiusSearch(cloudKeyPoses3D->back(), globalMapVisualizationSearchRadius, pointSearchIndGlobalMap, pointSearchSqDisGlobalMap, 0);
         mtx.unlock();
 
-        for (int i = 0; i < pointSearchIndGlobalMap.size(); ++i)
+        for (int i = 0; i < (int)pointSearchIndGlobalMap.size(); ++i)
             globalMapKeyPoses->push_back(cloudKeyPoses3D->points[pointSearchIndGlobalMap[i]]);
         // downsample near selected key frames
         pcl::VoxelGrid<PointType> downSizeFilterGlobalMapKeyPoses; // for global map visualization
@@ -414,7 +412,7 @@ public:
         downSizeFilterGlobalMapKeyPoses.filter(*globalMapKeyPosesDS);
 
         // extract visualized and downsampled key frames
-        for (int i = 0; i < globalMapKeyPosesDS->size(); ++i){
+        for (int i = 0; i < (int)globalMapKeyPosesDS->size(); ++i){
             if (pointDistance(globalMapKeyPosesDS->points[i], cloudKeyPoses3D->back()) > globalMapVisualizationSearchRadius)
                 continue;
             int thisKeyInd = (int)globalMapKeyPosesDS->points[i].intensity;
@@ -470,7 +468,7 @@ public:
         kdtreeHistoryKeyPoses->radiusSearch(cloudKeyPoses3D->back(), historyKeyframeSearchRadius, pointSearchIndLoop, pointSearchSqDisLoop, 0);
         
         closestHistoryFrameID = -1;
-        for (int i = 0; i < pointSearchIndLoop.size(); ++i)
+        for (int i = 0; i < (int)pointSearchIndLoop.size(); ++i)
         {
             int id = pointSearchIndLoop[i];
             if (abs(cloudKeyPoses6D->points[id].time - timeLaserCloudInfoLast) > historyKeyframeSearchTimeDiff)
@@ -483,7 +481,7 @@ public:
         if (closestHistoryFrameID == -1)
             return false;
 
-        if (cloudKeyPoses3D->size() - 1 == closestHistoryFrameID)
+        if ((int)cloudKeyPoses3D->size() - 1 == closestHistoryFrameID)
             return false;
 
         // save latest key frames
@@ -582,6 +580,18 @@ public:
         isam->update();
         gtSAMgraph.resize(0);
 
+        isamCurrentEstimate = isam->calculateEstimate();
+        Pose3 latestEstimate = isamCurrentEstimate.at<Pose3>(isamCurrentEstimate.size()-1);
+
+        transformTobeMapped[0] = latestEstimate.rotation().roll();
+        transformTobeMapped[1] = latestEstimate.rotation().pitch();
+        transformTobeMapped[2] = latestEstimate.rotation().yaw();
+        transformTobeMapped[3] = latestEstimate.translation().x();
+        transformTobeMapped[4] = latestEstimate.translation().y();
+        transformTobeMapped[5] = latestEstimate.translation().z();
+
+        correctPoses();
+
         aLoopIsClosed = true;
     }
 
@@ -597,6 +607,7 @@ public:
 
     void updateInitialGuess()
     {
+        static Eigen::Affine3f lastImuTransformation;
         // initialization
         if (cloudKeyPoses3D->points.empty())
         {
@@ -648,7 +659,7 @@ public:
         int numPoses = cloudKeyPoses3D->size();
         for (int i = numPoses-1; i >= 0; --i)
         {
-            if (cloudToExtract->size() <= surroundingKeyframeSize)
+            if ((int)cloudToExtract->size() <= surroundingKeyframeSize)
                 cloudToExtract->push_back(cloudKeyPoses3D->points[i]);
             else
                 break;
@@ -667,7 +678,7 @@ public:
         // extract all the nearby key poses and downsample them
         kdtreeSurroundingKeyPoses->setInputCloud(cloudKeyPoses3D); // create kd-tree
         kdtreeSurroundingKeyPoses->radiusSearch(cloudKeyPoses3D->back(), (double)surroundingKeyframeSearchRadius, pointSearchInd, pointSearchSqDis);
-        for (int i = 0; i < pointSearchInd.size(); ++i)
+        for (int i = 0; i < (int)pointSearchInd.size(); ++i)
         {
             int id = pointSearchInd[i];
             surroundingKeyPoses->push_back(cloudKeyPoses3D->points[id]);
@@ -699,7 +710,7 @@ public:
 
         // extract surrounding map
         #pragma omp parallel for num_threads(numberOfCores)
-        for (int i = 0; i < cloudToExtract->size(); ++i)
+        for (int i = 0; i < (int)cloudToExtract->size(); ++i)
         {
             if (pointDistance(cloudToExtract->points[i], cloudKeyPoses3D->back()) > surroundingKeyframeSearchRadius)
                 continue;
@@ -711,7 +722,7 @@ public:
         // fuse the map
         laserCloudCornerFromMap->clear();
         laserCloudSurfFromMap->clear(); 
-        for (int i = 0; i < cloudToExtract->size(); ++i)
+        for (int i = 0; i < (int)cloudToExtract->size(); ++i)
         {
             *laserCloudCornerFromMap += laserCloudCornerSurroundingVec[i];
             *laserCloudSurfFromMap   += laserCloudSurfSurroundingVec[i];
@@ -1192,6 +1203,9 @@ public:
         if (poseCovariance(3,3) < poseCovThreshold && poseCovariance(4,4) < poseCovThreshold)
             return;
 
+        // last gps position
+        static PointType lastGPSPoint;
+
         while (!gpsQueue.empty())
         {
             if (gpsQueue.front().header.stamp.toSec() < timeLaserCloudInfoLast - 0.2)
@@ -1229,8 +1243,18 @@ public:
                 if (abs(gps_x) < 1e-6 && abs(gps_y) < 1e-6)
                     continue;
 
+                // Add GPS every a few meters
+                PointType curGPSPoint;
+                curGPSPoint.x = gps_x;
+                curGPSPoint.y = gps_y;
+                curGPSPoint.z = gps_z;
+                if (pointDistance(curGPSPoint, lastGPSPoint) < 5.0)
+                    continue;
+                else
+                    lastGPSPoint = curGPSPoint;
+
                 gtsam::Vector Vector3(3);
-                Vector3 << noise_x, noise_y, noise_z;
+                Vector3 << max(noise_x, 1.0f), max(noise_y, 1.0f), max(noise_z, 1.0f);
                 noiseModel::Diagonal::shared_ptr gps_noise = noiseModel::Diagonal::Variances(Vector3);
                 gtsam::GPSFactor gps_factor(cloudKeyPoses3D->size(), gtsam::Point3(gps_x, gps_y, gps_z), gps_noise);
                 gtSAMgraph.add(gps_factor);
@@ -1439,6 +1463,9 @@ int main(int argc, char** argv)
     std::thread visualizeMapThread(&mapOptimization::visualizeGlobalMapThread, &MO);
 
     ros::spin();
+
+    loopthread.join();
+    visualizeMapThread.join();
 
     return 0;
 }

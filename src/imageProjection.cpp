@@ -1,6 +1,7 @@
 #include "utility.h"
 #include "lio_sam/cloud_info.h"
 
+// Velodyne
 struct PointXYZIRT
 {
     PCL_ADD_POINT4D
@@ -11,10 +12,27 @@ struct PointXYZIRT
 } EIGEN_ALIGN16;
 
 POINT_CLOUD_REGISTER_POINT_STRUCT (PointXYZIRT,  
-                                   (float, x, x) (float, y, y)
-                                   (float, z, z) (float, intensity, intensity)
-                                   (uint16_t, ring, ring) (float, time, time)
+    (float, x, x) (float, y, y) (float, z, z) (float, intensity, intensity)
+    (uint16_t, ring, ring) (float, time, time)
 )
+
+// Ouster
+// struct PointXYZIRT {
+//     PCL_ADD_POINT4D;
+//     float intensity;
+//     uint32_t t;
+//     uint16_t reflectivity;
+//     uint8_t ring;
+//     uint16_t noise;
+//     uint32_t range;
+//     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+// }EIGEN_ALIGN16;
+
+// POINT_CLOUD_REGISTER_POINT_STRUCT(PointXYZIRT,
+//     (float, x, x) (float, y, y) (float, z, z) (float, intensity, intensity)
+//     (uint32_t, t, t) (uint16_t, reflectivity, reflectivity)
+//     (uint8_t, ring, ring) (uint16_t, noise, noise) (uint32_t, range, range)
+// )
 
 const int queueLength = 500;
 
@@ -76,7 +94,7 @@ public:
         subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>(pointCloudTopic, 5, &ImageProjection::cloudHandler, this, ros::TransportHints().tcpNoDelay());
 
         pubExtractedCloud = nh.advertise<sensor_msgs::PointCloud2> ("lio_sam/deskew/cloud_deskewed", 1);
-        pubLaserCloudInfo = nh.advertise<lio_sam::cloud_info> ("lio_sam/deskew/cloud_info", 1);
+        pubLaserCloudInfo = nh.advertise<lio_sam::cloud_info> ("lio_sam/deskew/cloud_info", 10);
 
         allocateMemory();
         resetParameters();
@@ -203,7 +221,7 @@ public:
         if (ringFlag == 0)
         {
             ringFlag = -1;
-            for (int i = 0; i < currentCloudMsg.fields.size(); ++i)
+            for (int i = 0; i < (int)currentCloudMsg.fields.size(); ++i)
             {
                 if (currentCloudMsg.fields[i].name == "ring")
                 {
@@ -222,9 +240,9 @@ public:
         if (deskewFlag == 0)
         {
             deskewFlag = -1;
-            for (int i = 0; i < currentCloudMsg.fields.size(); ++i)
+            for (int i = 0; i < (int)currentCloudMsg.fields.size(); ++i)
             {
-                if (currentCloudMsg.fields[i].name == "time")
+                if (currentCloudMsg.fields[i].name == timeField)
                 {
                     deskewFlag = 1;
                     break;
@@ -273,7 +291,7 @@ public:
 
         imuPointerCur = 0;
 
-        for (int i = 0; i < imuQueue.size(); ++i)
+        for (int i = 0; i < (int)imuQueue.size(); ++i)
         {
             sensor_msgs::Imu thisImuMsg = imuQueue[i];
             double currentImuTime = thisImuMsg.header.stamp.toSec();
@@ -336,7 +354,7 @@ public:
         // get start odometry at the beinning of the scan
         nav_msgs::Odometry startOdomMsg;
 
-        for (int i = 0; i < odomQueue.size(); ++i)
+        for (int i = 0; i < (int)odomQueue.size(); ++i)
         {
             startOdomMsg = odomQueue[i];
 
@@ -371,7 +389,7 @@ public:
 
         nav_msgs::Odometry endOdomMsg;
 
-        for (int i = 0; i < odomQueue.size(); ++i)
+        for (int i = 0; i < (int)odomQueue.size(); ++i)
         {
             endOdomMsg = odomQueue[i];
 
@@ -515,7 +533,8 @@ public:
 
             rangeMat.at<float>(rowIdn, columnIdn) = range;
 
-            thisPoint = deskewPoint(&thisPoint, laserCloudIn->points[i].time);
+            thisPoint = deskewPoint(&thisPoint, laserCloudIn->points[i].time); // Velodyne
+            // thisPoint = deskewPoint(&thisPoint, (float)laserCloudIn->points[i].t / 1000000000.0); // Ouster
 
             int index = columnIdn  + rowIdn * Horizon_SCAN;
             fullCloud->points[index] = thisPoint;

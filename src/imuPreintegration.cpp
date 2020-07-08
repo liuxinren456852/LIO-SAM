@@ -91,7 +91,7 @@ public:
         gtsam::imuBias::ConstantBias prior_imu_bias((gtsam::Vector(6) << 0, 0, 0, 0, 0, 0).finished());; // assume zero initial bias
 
         priorPoseNoise  = gtsam::noiseModel::Diagonal::Sigmas((gtsam::Vector(6) << 1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2).finished()); // rad,rad,rad,m, m, m
-        priorVelNoise   = gtsam::noiseModel::Isotropic::Sigma(3, 1e2); // m/s
+        priorVelNoise   = gtsam::noiseModel::Isotropic::Sigma(3, 1e4); // m/s
         priorBiasNoise  = gtsam::noiseModel::Isotropic::Sigma(6, 1e-3); // 1e-2 ~ 1e-3 seems to be good
         correctionNoise = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2); // meter
         noiseModelBetweenBias = (gtsam::Vector(6) << imuAccBiasN, imuAccBiasN, imuAccBiasN, imuGyrBiasN, imuGyrBiasN, imuGyrBiasN).finished();
@@ -144,6 +144,7 @@ public:
         {
             resetParams();
             imuPreintegrationResetId = currentResetId;
+            return;
         }
 
 
@@ -315,7 +316,7 @@ public:
     bool failureDetection(const gtsam::Vector3& velCur, const gtsam::imuBias::ConstantBias& biasCur)
     {
         Eigen::Vector3f vel(velCur.x(), velCur.y(), velCur.z());
-        if (vel.norm() > 10)
+        if (vel.norm() > 30)
         {
             ROS_WARN("Large velocity, reset IMU-preintegration!");
             return true;
@@ -323,7 +324,7 @@ public:
 
         Eigen::Vector3f ba(biasCur.accelerometer().x(), biasCur.accelerometer().y(), biasCur.accelerometer().z());
         Eigen::Vector3f bg(biasCur.gyroscope().x(), biasCur.gyroscope().y(), biasCur.gyroscope().z());
-        if (ba.norm() > 0.1 || bg.norm() > 0.1)
+        if (ba.norm() > 1.0 || bg.norm() > 1.0)
         {
             ROS_WARN("Large bias, reset IMU-preintegration!");
             return true;
